@@ -11,6 +11,7 @@ module Sablon
       # Excel treats 1900 as a leap year, serials before March 1900 are
       # shifted by one day because of the non existent 29th of February.
       LEAP_BUG_DATE = Date.new(1900, 3, 1)
+      MAX_TEXT_LENGTH = 32_767
 
       module_function
 
@@ -95,6 +96,17 @@ module Sablon
         cell.element_children.each do |child|
           child.remove unless child.name == 'extLst'
         end
+      end
+
+      # Replaces the content of the cell with an inline string. The text is
+      # expected in its stored (escaped) form.
+      def write_text(cell, text)
+        clear(cell)
+        cell['t'] = 'inlineStr'
+        inline = Nokogiri::XML::Node.new('is', cell.document)
+        ext = cell.element_children.detect { |child| child.name == 'extLst' }
+        ext ? ext.add_previous_sibling(inline) : cell.add_child(inline)
+        text_element(inline, text)
       end
 
       def add_element(parent, name, text = nil)

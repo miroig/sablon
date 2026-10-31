@@ -406,7 +406,8 @@ representation of the value. As in Word templates, `nil` and `false` remove
 the field.
 
 Only text and values can be inserted into spreadsheets. Inserting HTML,
-WordProcessingML or images raises a `Sablon::ContextError`.
+WordProcessingML or images raises a `Sablon::ContextError`. The same error is
+raised when the text of a cell exceeds Excel's limit of 32,767 characters.
 
 #### Repeating and Removing Rows or Cells
 
@@ -479,12 +480,23 @@ validations, charts, pictures, shapes and charts anchored to cells, and notes
 (comments). Cached formula results are removed and the workbook is marked to
 be recalculated when it is opened.
 
+Excel tables grow and shrink with their rows and follow the rules Excel uses
+when rows of a table are deleted or headers are edited:
+
+* When all data rows of a table are removed (i.e. a loop without items), an
+  empty row is kept below the header.
+* When the header row of a table is removed by a block, the table is removed.
+* Header cells are always stored as text. Empty header cells are named
+  `Column1`, `Column2`, ... and duplicate names get a number appended
+  (`Name2`).
+
 #### Spreadsheet Limitations
 
 * Merged cells, hyperlinks, page breaks, whole column references (`A:C`),
   references written as text (i.e. `INDIRECT("A1")`) and pivot tables are not
   updated.
-* Cell loops can't be used inside of Excel tables.
+* Cell loops can't be used inside of Excel tables. Structured references
+  (`Table1[Amount]`) to a table removed by a block are not updated.
 * Images, fields in headers and footers and `.xltx` templates are not supported.
 * `comment` blocks are not enabled for spreadsheets by default. The field
   handlers used for spreadsheets can be customized the same way as for Word

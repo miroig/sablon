@@ -1,11 +1,21 @@
 # Builds minimal spreadsheet packages for tests. The generated XML mirrors
-# the structure written by Microsoft Excel.
+# the structure written by Microsoft Excel and is valid according to the
+# Office Open XML schemas.
 class XlsxBuilder
   MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'.freeze
   REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'.freeze
   PKG_REL_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'.freeze
   REL_TYPE = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'.freeze
   CT_PREFIX = 'application/vnd.openxmlformats-officedocument.spreadsheetml'.freeze
+  # Order of the worksheet child elements required by the schema
+  WORKSHEET_ORDER = %w[sheetPr dimension sheetViews sheetFormatPr cols sheetData sheetCalcPr
+                       sheetProtection protectedRanges scenarios autoFilter sortState
+                       dataConsolidate customSheetViews mergeCells phoneticPr
+                       conditionalFormatting dataValidations hyperlinks printOptions
+                       pageMargins pageSetup headerFooter rowBreaks colBreaks customProperties
+                       cellWatches ignoredErrors smartTags drawing legacyDrawing legacyDrawingHF
+                       drawingHF picture oleObjects controls webPublishItems tableParts
+                       extLst].freeze
 
   Sheet = Struct.new(:name, :rows, :before, :after, :rels)
 
@@ -21,9 +31,10 @@ class XlsxBuilder
     @calc_chain = false
   end
 
-  # +rows+ is the inner XML of sheetData, +before+ is inserted before
-  # sheetData (i.e. cols) and +after+ after it. +rels+ is an array of
-  # [type, target] relationships of the sheet.
+  # +rows+ is the inner XML of sheetData. +before+ and +after+ contain the
+  # elements before (i.e. cols) and after sheetData, they are sorted into
+  # the order required by the schema. +rels+ is an array of [type, target]
+  # relationships of the sheet.
   def add_sheet(name, rows, before: '', after: '', rels: [])
     @sheets << Sheet.new(name, rows, before, after, rels)
     self
@@ -43,7 +54,7 @@ class XlsxBuilder
     entries['xl/_rels/workbook.xml.rels'] = rels(workbook_rels)
     entries['xl/styles.xml'] = styles
     entries['xl/sharedStrings.xml'] = shared_strings_xml unless @shared_strings.empty?
-    entries['xl/calcChain.xml'] = calc_chain_xml if @calc_chain
+    entries['xl/calcChain.xml'] = calc_chain_xml if calc_chain?
     @sheets.each_with_index do |sheet, index|
       entries["xl/worksheets/sheet#{index + 1}.xml"] = worksheet(sheet)
       next if sheet.rels.empty?
@@ -98,7 +109,7 @@ class XlsxBuilder
     list = @sheets.each_with_index.map { |_, index| ['worksheet', "worksheets/sheet#{index + 1}.xml"] }
     list << %w[styles styles.xml]
     list << %w[sharedStrings sharedStrings.xml] unless @shared_strings.empty?
-    list << %w[calcChain calcChain.xml] if @calc_chain
+    list << %w[calcChain calcChain.xml] if calc_chain?
     list
   end
 
@@ -106,7 +117,7 @@ class XlsxBuilder
     overrides = { 'xl/workbook.xml' => "#{CT_PREFIX}.sheet.main+xml",
                   'xl/styles.xml' => "#{CT_PREFIX}.styles+xml" }
     overrides['xl/sharedStrings.xml'] = "#{CT_PREFIX}.sharedStrings+xml" unless @shared_strings.empty?
-    overrides['xl/calcChain.xml'] = "#{CT_PREFIX}.calcChain+xml" if @calc_chain
+    overrides['xl/calcChain.xml'] = "#{CT_PREFIX}.calcChain+xml" if calc_chain?
     @sheets.each_index do |index|
       overrides["xl/worksheets/sheet#{index + 1}.xml"] = "#{CT_PREFIX}.worksheet+xml"
     end
@@ -136,6 +147,7 @@ class XlsxBuilder
   end
 
   # style 0: default, 1: date (numFmtId 14), 2: bold font, 3: currency
+  # differential style 0 (conditional formatting): red text on red fill
   def styles
     %(#{declaration}<styleSheet xmlns="#{MAIN_NS}">) +
       %(<numFmts count="1"><numFmt numFmtId="164" formatCode="&quot;$&quot;#,##0.00"/></numFmts>) +
@@ -149,6 +161,8 @@ class XlsxBuilder
       %(<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>) +
       %(<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>) +
       %(<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>) +
+      %(<dxfs count="1"><dxf><font><color rgb="FF9C0006"/></font>) +
+      %(<fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf></dxfs>) +
       %(</styleSheet>)
   end
 
@@ -159,18 +173,40 @@ class XlsxBuilder
     %(#{declaration}<sst xmlns="#{MAIN_NS}" count="#{items.length}" uniqueCount="#{items.length}">#{items.join}</sst>)
   end
 
+  # The calculation chain may only list cells containing formulas
+  def calc_chain?
+    @calc_chain && !formula_cells.empty?
+  end
+
+  def formula_cells
+    @sheets.each_with_index.flat_map do |sheet, index|
+      Nokogiri::XML("<sheetData>#{sheet.rows}</sheetData>").xpath('//c[f]').map do |cell|
+        [cell['r'], index + 1]
+      end
+    end
+  end
+
   def calc_chain_xml
-    %(#{declaration}<calcChain xmlns="#{MAIN_NS}"><c r="A1" i="1"/></calcChain>)
+    cells = formula_cells.map { |ref, sheet_id| %(<c r="#{ref}" i="#{sheet_id}"/>) }
+    %(#{declaration}<calcChain xmlns="#{MAIN_NS}">#{cells.join}</calcChain>)
   end
 
   def worksheet(sheet)
-    %(#{declaration}<worksheet xmlns="#{MAIN_NS}" xmlns:r="#{REL_NS}" ) +
-      %(xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ) +
-      %(xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" mc:Ignorable="x14ac">) +
-      %(<dimension ref="A1"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>) +
-      %(<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>#{sheet.before}) +
-      %(<sheetData>#{sheet.rows}</sheetData>#{sheet.after}) +
-      %(<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>)
+    xml = %(#{declaration}<worksheet xmlns="#{MAIN_NS}" xmlns:r="#{REL_NS}" ) +
+          %(xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ) +
+          %(xmlns:x14ac="http://schemas.microsoft.com/office/spreadsheetml/2009/9/ac" mc:Ignorable="x14ac">) +
+          %(<dimension ref="A1"/><sheetViews><sheetView workbookViewId="0"/></sheetViews>) +
+          %(<sheetFormatPr defaultRowHeight="15" x14ac:dyDescent="0.25"/>#{sheet.before}) +
+          %(<sheetData>#{sheet.rows}</sheetData>#{sheet.after}) +
+          %(<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/></worksheet>)
+    doc = Nokogiri::XML(xml)
+    children = doc.root.element_children.each_with_index.sort_by do |node, index|
+      position = WORKSHEET_ORDER.index(node.name)
+      raise ArgumentError, "Unknown worksheet element: #{node.name}" unless position
+      [position, index]
+    end
+    children.each { |node, _| doc.root.add_child(node) }
+    doc.to_xml(indent: 0, save_with: 0)
   end
 end
 

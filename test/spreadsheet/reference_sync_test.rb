@@ -30,7 +30,7 @@ class ReferenceSyncTest < Sablon::TestCase
 
   def test_formulas_of_other_sheets_and_defined_names
     b = builder
-    b.add_sheet('My Sheet', row(1, formula('A1', "Data!B6+'DATA'!B4+'My Sheet'!A2+Other!B6"), formula('A2', 'SUM(Data!B3:B5)')))
+    b.add_sheet('My Sheet', row(1, formula('A1', "Data!B6+'DATA'!B4+'My Sheet'!A2+Other!B6")) + row(2, formula('A2', 'SUM(Data!B3:B5)')))
     b.add_sheet('Other', row(6, number('B6', 1)))
     b.defined_names = [['Values', 'Data!$B$4:$B$4'], ['_xlnm.Print_Area', "'Data'!$A$1:$B$8", 0], ['Fixed', 'Other!$A$1']]
     out = render_xlsx(b, context)
@@ -40,20 +40,28 @@ class ReferenceSyncTest < Sablon::TestCase
   end
 
   def test_conditional_formatting_validation_and_filters
-    ext = %(<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">) +
+    guid = '{6C9D3A1E-1C2B-4B5D-9E4F-0A1B2C3D4E5F}'
+    x14 = 'xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main"'
+    data_bar = %(<conditionalFormatting sqref="B4"><cfRule type="dataBar" priority="3"><dataBar><cfvo type="min"/>) +
+               %(<cfvo type="formula" val="$B$8"/><color rgb="FF638EC6"/></dataBar><extLst>) +
+               %(<ext uri="{B025F937-C7B1-47D3-B67F-A62EFF666E3E}" #{x14}><x14:id>#{guid}</x14:id></ext></extLst></cfRule></conditionalFormatting>)
+    ext = %(<extLst><ext uri="{78C0D931-6437-407d-A8EE-F0AAD7539E65}" #{x14}>) +
           %(<x14:conditionalFormattings><x14:conditionalFormatting xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main">) +
-          %(<x14:cfRule type="dataBar" id="{1}"><x14:dataBar><x14:cfvo type="formula"><xm:f>$B$8</xm:f></x14:cfvo></x14:dataBar></x14:cfRule>) +
+          %(<x14:cfRule type="dataBar" id="#{guid}"><x14:dataBar minLength="0" maxLength="100"><x14:cfvo type="autoMin"/>) +
+          %(<x14:cfvo type="formula"><xm:f>$B$8</xm:f></x14:cfvo></x14:dataBar></x14:cfRule>) +
           %(<xm:sqref>B4</xm:sqref></x14:conditionalFormatting></x14:conditionalFormattings></ext></extLst>)
     after = %(<autoFilter ref="A2:B5"><sortState ref="A3:B5"><sortCondition ref="B3:B5"/></sortState></autoFilter>) +
             %(<conditionalFormatting sqref="B4 B8"><cfRule type="expression" dxfId="0" priority="1"><formula>B4&gt;$B$8</formula></cfRule></conditionalFormatting>) +
             %(<conditionalFormatting sqref="A3"><cfRule type="expression" dxfId="0" priority="2"><formula>TRUE</formula></cfRule></conditionalFormatting>) +
+            data_bar +
             %(<dataValidations count="2"><dataValidation type="whole" sqref="B4"><formula1>0</formula1><formula2>$B$8</formula2></dataValidation>) +
             %(<dataValidation type="list" sqref="A5"><formula1>"a,b"</formula1></dataValidation></dataValidations>) + ext
     doc = render_xlsx(builder(after: after), context)['xl/worksheets/sheet1.xml']
     ns = { 'x' => XlsxBuilder::MAIN_NS, 'xm' => 'http://schemas.microsoft.com/office/excel/2006/main' }
     assert_equal ['A2:B7', 'A3:B7', 'B3:B7'], doc.xpath('//x:autoFilter/descendant-or-self::*[@ref]', ns).map { |n| n['ref'] }
-    assert_equal ['B3:B7 B10'], doc.xpath('//x:conditionalFormatting', ns).map { |n| n['sqref'] }
+    assert_equal ['B3:B7 B10', 'B3:B7'], doc.xpath('//x:conditionalFormatting', ns).map { |n| n['sqref'] }
     assert_equal ['B3>$B$10'], doc.xpath('//x:conditionalFormatting//x:formula', ns).map(&:text)
+    assert_equal [nil, '$B$10'], doc.xpath('//x:cfvo', ns).map { |n| n['val'] }
     validations = doc.at_xpath('//x:dataValidations', ns)
     assert_equal '1', validations['count']
     assert_equal [['B3:B7', '$B$10']], validations.xpath('x:dataValidation', ns).map { |n| [n['sqref'], n.at_xpath('x:formula2', ns).text] }
@@ -90,14 +98,68 @@ class ReferenceSyncTest < Sablon::TestCase
     assert_equal "Column loops are not supported within the table 'T'", e.message
   end
 
+  def table_builder(rows, ref, columns = %w[Name Value])
+    cols = columns.each_with_index.map { |name, i| %(<tableColumn id="#{i + 1}" name="#{name}"/>) }.join
+    table = %(<table xmlns="#{XlsxBuilder::MAIN_NS}" id="1" name="T" displayName="T" ref="#{ref}" totalsRowShown="0">) +
+            %(<autoFilter ref="#{ref}"/><tableColumns count="#{columns.length}">#{cols}</tableColumns></table>)
+    b = XlsxBuilder.new.add_sheet('Data', rows, after: '<tableParts count="1"><tablePart r:id="rId1"/></tableParts>',
+                                                rels: [%w[table ../tables/table1.xml]])
+    b.add_part('xl/tables/table1.xml', table, "#{CT}.spreadsheetml.table+xml")
+  end
+
+  def test_tables_keep_an_empty_data_row
+    rows = row(1, text('A1', 'Name'), text('B1', 'Value')) +
+           row(2, text('A2', '{{items:each(i)}}')) +
+           row(3, text('A3', '{{=i.name}}'), text('B3', '{{=i.value}}')) +
+           row(4, text('A4', '{{items:endEach}}')) +
+           row(6, text('A6', 'after'))
+    out = render_xlsx(table_builder(rows, 'A1:B4'), items: [])
+    assert_equal 'A1:B2', out['xl/tables/table1.xml'].root['ref']
+    assert_equal({ 'A1' => 'Name', 'B1' => 'Value', 'A4' => 'after' }, cell_values(out))
+    out = render_xlsx(table_builder(rows, 'A1:B4'), items: [{ name: 'a', value: 1 }, { name: 'b', value: 2 }])
+    assert_equal 'A1:B3', out['xl/tables/table1.xml'].root['ref']
+  end
+
+  def test_tables_removed_with_their_header_are_deleted
+    rows = row(1, text('A1', '{{show:if}}')) +
+           row(2, text('A2', 'Name'), text('B2', 'Value')) +
+           row(3, text('A3', 'x'), number('B3', 1)) +
+           row(4, text('A4', '{{show:endIf}}')) +
+           row(5, text('A5', 'after'))
+    out = render_xlsx(table_builder(rows, 'A2:B3'), show: true)
+    assert_equal 'A1:B2', out['xl/tables/table1.xml'].root['ref']
+    #
+    out = render_xlsx(table_builder(rows, 'A2:B3'), show: false)
+    assert_equal({ 'A1' => 'after' }, cell_values(out))
+    assert !out.key?('xl/tables/table1.xml')
+    assert !sheet_xml(out).include?('tablePart')
+    assert !out['xl/worksheets/_rels/sheet1.xml.rels'].to_xml.include?('table')
+    assert !out['[Content_Types].xml'].to_xml.include?('table1.xml')
+  end
+
+  def test_rendered_table_headers_are_unique_text
+    rows = row(1, text('A1', '{{=h.a}}'), text('B1', '{{=h.b}}'), text('C1', '{{=h.c}}'), text('D1', '{{=h.d}}'), text('E1', 'Fixed')) +
+           row(2, number('A2', 1), number('B2', 2), number('C2', 3), number('D2', 4), number('E2', 5))
+    b = table_builder(rows, 'A1:E2', %w[{{=h.a}} {{=h.b}} {{=h.c}} {{=h.d}} Fixed])
+    out = render_xlsx(b, h: { a: 'Name', b: nil, c: 'name', d: 2024 })
+    names = out['xl/tables/table1.xml'].xpath('//x:tableColumn', 'x' => XlsxBuilder::MAIN_NS).map { |n| n['name'] }
+    assert_equal %w[Name Column2 name2 2024 Fixed], names
+    assert_equal %w[Name Column2 name2 2024 Fixed], %w[A1 B1 C1 D1 E1].map { |ref| cell_values(out)[ref] }
+    assert_includes sheet_xml(out), '<c r="D1" t="inlineStr">'
+  end
+
   def test_drawings
+    shape_id = 1
     anchor = lambda do |type, from, to, attrs = ''|
       marker = ->(name, (col, row)) { "<xdr:#{name}><xdr:col>#{col}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>#{row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:#{name}>" }
       to_xml = to ? marker.call('to', to) : '<xdr:ext cx="1" cy="1"/>'
-      "<xdr:#{type}#{attrs}>#{marker.call('from', from)}#{to_xml}<xdr:sp/><xdr:clientData/></xdr:#{type}>"
+      shape_id += 1
+      shape = %(<xdr:sp macro="" textlink=""><xdr:nvSpPr><xdr:cNvPr id="#{shape_id}" name="Shape #{shape_id}"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr/></xdr:sp>)
+      "<xdr:#{type}#{attrs}>#{marker.call('from', from)}#{to_xml}#{shape}<xdr:clientData/></xdr:#{type}>"
     end
     drawing = %(<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" ) +
-              %(xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">) +
+              %(xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" ) +
+              %(xmlns:a14="http://schemas.microsoft.com/office/drawing/2010/main">) +
               anchor.call('twoCellAnchor', [3, 1], [6, 7]) +
               anchor.call('twoCellAnchor', [3, 3], [4, 3]) +
               anchor.call('twoCellAnchor', [3, 7], [4, 9], ' editAs="oneCell"') +
@@ -140,8 +202,10 @@ class ReferenceSyncTest < Sablon::TestCase
                %(<comment ref="B4" authorId="0"><text><t>body</t></text></comment>) +
                %(<comment ref="B8" authorId="0"><text><t>below</t></text></comment></commentList></comments>)
     threaded = %(<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">) +
-               %(<threadedComment ref="A3" id="{1}"><text>control</text></threadedComment>) +
-               %(<threadedComment ref="B8" id="{2}"><text>below</text></threadedComment></ThreadedComments>)
+               %(<threadedComment ref="A3" dT="2024-01-01T00:00:00.00" personId="{8A3C5F2E-1B4D-4E6F-9A7B-0C1D2E3F4A5B}" ) +
+               %(id="{1F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F1}"><text>control</text></threadedComment>) +
+               %(<threadedComment ref="B8" dT="2024-01-01T00:00:00.00" personId="{8A3C5F2E-1B4D-4E6F-9A7B-0C1D2E3F4A5B}" ) +
+               %(id="{2F2E3D4C-5B6A-4978-8695-A4B3C2D1E0F2}"><text>below</text></threadedComment></ThreadedComments>)
     note = ->(row, col) { %(<v:shape id="s#{row}" type="#_x0000_t202"><x:ClientData ObjectType="Note"><x:Anchor>#{col + 1}, 15, #{row}, 10, #{col + 3}, 15, #{row + 4}, 4</x:Anchor><x:Row>#{row}</x:Row><x:Column>#{col}</x:Column></x:ClientData></v:shape>) }
     vml = %(<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:x="urn:schemas-microsoft-com:office:excel"><v:shapetype id="_x0000_t202"/>) +
           note.call(2, 0) + note.call(3, 1) + note.call(7, 1) + '</xml>'

@@ -46,6 +46,7 @@ module Sablon
         return doc unless layout.changes?
         #
         manipulate(sheet_data, env)
+        package.keep_table_rows(model.current_entry, layout)
         map = layout.finalize
         updater = Spreadsheet::ReferenceUpdater.new(map, package.sheet_name(model.current_entry))
         updater.update_cell_formulas(sheet_data, layout)

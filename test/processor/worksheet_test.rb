@@ -177,6 +177,13 @@ class ProcessorWorksheetTest < Sablon::TestCase
     assert_equal 'The rendered worksheet exceeds the maximum number of rows (1048576)', e.message
   end
 
+  def test_text_length_limit
+    rows = [row(1, text('A1', 'x{{=text}}'))]
+    assert_equal 32_767, cell_values(render(rows, text: 'a' * 32_766))['A1'].length
+    e = assert_raises(Sablon::ContextError) { render(rows, text: 'a' * 32_767) }
+    assert_equal 'The text of cell A1 exceeds the maximum length of 32767 characters', e.message
+  end
+
   def test_annotations_are_removed
     rows = [%(<row r="1" spans="1:4">#{text('A1', 'Name')}#{text('B1', '{{l:each(i)}}')}#{text('C1', '{{=i}}')}#{text('D1', '{{l:endEach}}')}</row>),
             row(2, text('A2', '{{l:each(i)}}')), row(4, text('A4', '{{=i}}')), row(5, text('A5', '{{l:endEach}}'))]

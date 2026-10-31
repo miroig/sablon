@@ -85,6 +85,24 @@ module Sablon
         update_sheet_parts(entry, updater)
       end
 
+      # Excel tables need at least one data row. When blocks remove all data
+      # rows of a table an empty row is kept below the header, the same way
+      # Excel does when all rows of a table are deleted. Called with the
+      # template positions before the worksheet is renumbered.
+      def keep_table_rows(entry, layout)
+        related(entry, 'table').each do |_, part|
+          table = xml(part) && xml(part).root
+          ref = table && Formula.references(table['ref']).first
+          next unless ref && ref.kind == :range
+          header = (table['headerRowCount'] || 1).to_i
+          first_data = ref.row1 + header
+          last_data = ref.row2 - table['totalsRowCount'].to_i
+          next if first_data > last_data || layout.rows_remain?(first_data, last_data)
+          next if header > 0 && !layout.rows_remain?(ref.row1, first_data - 1)
+          layout.keep_row(first_data)
+        end
+      end
+
       # Returns [relationship id, entry name] pairs of the parts related to
       # +entry+ by a relationship type ending with "/type".
       def related(entry, type)
@@ -109,8 +127,13 @@ module Sablon
       end
 
       def update_sheet_parts(entry, updater)
-        related(entry, 'table').each do |_, table|
-          updater.update_table(xml(table), xml(entry)) if xml(table)
+        related(entry, 'table').each do |rid, table|
+          next unless xml(table)
+          if updater.table_removed?(xml(table))
+            remove_table(entry, rid, table)
+          else
+            updater.update_table(xml(table), xml(entry))
+          end
         end
         related(entry, 'drawing').each do |_, drawing|
           updater.update_drawing(xml(drawing)) if xml(drawing)
@@ -154,15 +177,33 @@ module Sablon
       end
 
       def remove_calc_chain
-        rels = xml(Sablon::DOM::Relationships.rels_entry_name_for(WORKBOOK))
-        content_types = xml('[Content_Types].xml')
         related(WORKBOOK, 'calcChain').each do |rid, entry|
-          @model.zip_contents.delete(entry)
-          rels.root.element_children.each { |rel| rel.remove if rel['Id'] == rid }
-          next unless content_types
-          content_types.root.element_children.each do |node|
-            node.remove if node['PartName'] == "/#{entry}"
-          end
+          remove_part(WORKBOOK, rid, entry)
+        end
+      end
+
+      # Tables whose header row has been removed by a block are deleted
+      def remove_table(entry, rid, part)
+        remove_part(entry, rid, part)
+        @model.zip_contents.delete(Sablon::DOM::Relationships.rels_entry_name_for(part))
+        parts = xml(entry).at_xpath('/*/*[local-name() = "tableParts"]')
+        return unless parts
+        parts.element_children.each do |node|
+          node.remove if node.attributes.values.any? { |attr| attr.name == 'id' && attr.value == rid }
+        end
+        return parts.remove if parts.element_children.empty?
+        parts['count'] = parts.element_children.length.to_s
+      end
+
+      # Removes a part, the relationship pointing to it and its content type
+      def remove_part(source, rid, part)
+        @model.zip_contents.delete(part)
+        rels = xml(Sablon::DOM::Relationships.rels_entry_name_for(source))
+        rels.root.element_children.each { |rel| rel.remove if rel['Id'] == rid }
+        content_types = xml('[Content_Types].xml')
+        return unless content_types
+        content_types.root.element_children.each do |node|
+          node.remove if node['PartName'] == "/#{part}"
         end
       end
     end

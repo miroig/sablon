@@ -148,6 +148,20 @@ module Sablon
         end
       end
 
+      # true if any of the template rows between +from+ and +to+ is part of
+      # the rendered worksheet. Rows outside of the region are never removed.
+      def rows_remain?(from, to)
+        return true if !changes? || from < @first_row || to > @last_row
+        row_nodes.any? { |row| row_number(row).between?(from, to) }
+      end
+
+      # Keeps an empty row at the position of the removed template row
+      def keep_row(number)
+        node = filler('row', number.to_s)
+        following = row_nodes.detect { |row| row_number(row) > number }
+        following ? following.add_previous_sibling(node) : @sheet_data.add_child(node)
+      end
+
       private
 
       def row_nodes
@@ -269,6 +283,17 @@ module Sablon
           inline.children.each(&:remove)
           CellValue.text_element(inline, text)
         end
+        check_text_length(cell, inline)
+      end
+
+      # Excel counts the length of cell text in UTF-16 code units
+      def check_text_length(cell, inline)
+        length = inline.xpath('.//*[local-name() = "t"]').inject(0) do |sum, node|
+          sum + node.content.encode('UTF-16LE').bytesize / 2
+        end
+        return if length <= CellValue::MAX_TEXT_LENGTH
+        raise ContextError, "The text of cell #{cell['r']} exceeds the maximum length of " \
+                            "#{CellValue::MAX_TEXT_LENGTH} characters"
       end
 
       def strip(node)

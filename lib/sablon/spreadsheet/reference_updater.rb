@@ -101,6 +101,16 @@ module Sablon
         end
       end
 
+      # true if blocks removed the header row of a table or all of its rows
+      def table_removed?(doc)
+        table = doc.root
+        ref = Formula.references(table['ref']).first
+        return false unless ref && ref.kind == :range
+        header = (table['headerRowCount'] || 1).to_i
+        last_row = header > 0 ? ref.row1 + header - 1 : ref.row2
+        @map.extent(ref.row1, ref.col1, last_row, ref.col2).nil?
+      end
+
       # Updates the range of a table. Column loops can't be used within
       # tables because the table columns would need to change.
       def update_table(doc, sheet_doc)
@@ -190,7 +200,8 @@ module Sablon
 
       # Formulas of conditional formatting rules, data validations and
       # Excel 2010 extensions (xm:f). They are relative to the first cell
-      # of the range they apply to.
+      # of the range they apply to. The thresholds (cfvo) of color scales,
+      # data bars and icon sets can contain formulas as well.
       def update_rule_formulas(doc, local)
         ns = { 'x' => namespace(doc), 'xm' => EXCEL_NS }
         selectors = ['/x:worksheet/x:conditionalFormatting/x:cfRule/x:formula',
@@ -199,6 +210,9 @@ module Sablon
                      '//xm:f']
         doc.xpath(selectors.join(' | '), ns).each do |node|
           node.content = formula(node.text, local, nil, :first) unless node.text.empty?
+        end
+        doc.xpath('/x:worksheet/x:conditionalFormatting/x:cfRule/*/x:cfvo[@val]', ns).each do |node|
+          node['val'] = formula(node['val'], local, nil, :first)
         end
       end
 
@@ -218,30 +232,69 @@ module Sablon
         node['ref'] = value unless value.empty?
       end
 
-      # Header cells and table column names need to match
+      # Header cells need to contain unique, non-empty text that matches the
+      # names of the table columns, otherwise Excel repairs the table. Header
+      # cells with rendered values are converted to text. Empty and duplicate
+      # names are replaced the same way Excel does (Column1, Name2).
       def update_table_columns(table, sheet_doc)
         return if table['headerRowCount'] == '0' || sheet_doc.nil?
         ref = Formula.references(table['ref']).first
         columns = table.element_children.detect { |node| node.name == 'tableColumns' }
         return unless columns
         ns = { 'x' => namespace(sheet_doc) }
+        row = sheet_doc.at_xpath("//x:sheetData/x:row[@r='#{ref.row1}']", ns)
+        return unless row
+        used = {}
         columns.element_children.each_with_index do |column, index|
-          address = CellReference.format(ref.row1, ref.col1 + index)
-          cell = sheet_doc.at_xpath("//x:sheetData/x:row/x:c[@r='#{address}']", ns)
-          text = cell && inline_text(cell)
-          column['name'] = text if text && !text.empty?
+          cell = header_cell(row, ref.row1, ref.col1 + index)
+          text = header_text(cell)
+          if text.nil?
+            used[column['name'].to_s.downcase] = true
+            next
+          end
+          name = text.empty? ? "Column#{index + 1}" : text
+          name = unique_name(name, used) if used[name.downcase]
+          used[name.downcase] = true
+          CellValue.write_text(cell, name) unless name == text && cell['t'] == 'inlineStr'
+          column['name'] = name
         end
       end
 
-      # Text of cells that have been changed by the rendering process
-      def inline_text(cell)
+      # Returns the header cell, missing cells are added to the row
+      def header_cell(row, row_number, col)
+        address = CellReference.format(row_number, col)
+        cells = row.element_children.select { |node| node.name == 'c' }
+        cell = cells.detect { |node| node['r'] == address }
+        return cell if cell
+        cell = Nokogiri::XML::Node.new('c', row.document)
+        cell['r'] = address
+        following = cells.detect { |node| (pos = CellReference.parse(node['r'])) && pos[1] > col }
+        following ? following.add_previous_sibling(cell) : row.add_child(cell)
+        cell
+      end
+
+      # Text of a header cell or nil if the cell keeps its template value
+      # (shared strings and formulas).
+      def header_text(cell)
+        children = cell.element_children
+        return if children.any? { |node| node.name == 'f' }
+        value = children.detect { |node| node.name == 'v' }
         case cell['t']
         when 'inlineStr'
           cell.xpath('./*[local-name() = "is"]//*[local-name() = "t"]').map(&:text).join
-        when nil, 'n'
-          value = cell.element_children.detect { |node| node.name == 'v' }
-          value.text if value && cell.element_children.none? { |node| node.name == 'f' }
+        when 's', 'str', 'e'
+          nil
+        when 'b'
+          value && value.text == '1' ? 'TRUE' : 'FALSE'
+        else
+          value ? value.text : ''
         end
+      end
+
+      def unique_name(name, used)
+        suffix = 2
+        suffix += 1 while used["#{name}#{suffix}".downcase]
+        "#{name}#{suffix}"
       end
 
       # Returns the 1 based [row, column] of a drawing anchor marker
