@@ -58,3 +58,19 @@ NOTE: When adding variables, those that display a value are preceded with an equ
 - Add your variable name in the input box; make sure to leave a space after the word `MERGEFIELD`
   - Example: `MERGEFIELD =person.first_name`
 - Click **OK**
+
+## Creating a Spreadsheet Template
+
+Spreadsheet templates are normal Excel workbooks (`.xlsx`). They can be created with Microsoft Excel, LibreOffice Calc or any other application that saves workbooks in the Office Open XML format.
+
+- Create a new workbook and design the sheet as you want the rendered result to look like.
+- Type fields into cells using double braces, e.g. `{{=person.first_name}}`. Fields don't need to be inserted using a special dialog; they are normal cell text.
+- A field can fill a cell on its own or be part of a longer text like `Dear {{=person.first_name}},`.
+- Format the cells that receive values the way the values should be displayed. A cell containing only `{{=invoice.date}}` should use a date format, a cell containing only `{{=item.price}}` a currency format and so on.
+- Put the fields of loops and conditionals (`{{items:each(item)}}` ... `{{items:endEach}}`) in their own rows to repeat or remove the rows between them. The rows containing these fields are removed when the template is rendered, so keep them free of other content.
+- Put the fields of loops and conditionals in the same row to repeat or remove the cells between them instead.
+- Formulas can be used as usual. Write formulas for the first row (or cell) of a loop, e.g. `=B3*C3`. Formulas below a loop like `=SUM(D3)` are extended to all generated rows.
+
+As with Word templates, fields that display a value are preceded with an equals sign `=` while fields that perform logic, such as loops and conditionals, are not.
+
+A complete example can be found in [xlsx_report_template.xlsx](/test/fixtures/xlsx_report_template.xlsx).

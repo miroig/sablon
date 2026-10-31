@@ -2,12 +2,21 @@ module Sablon
   module Test
     module Assertions
       def assert_docx_equal(expected_path, actual_path)
+        assert_package_equal(expected_path, actual_path, 'document')
+      end
+
+      # Same as +assert_docx_equal+ for spreadsheets (xlsx)
+      def assert_xlsx_equal(expected_path, actual_path)
+        assert_package_equal(expected_path, actual_path, 'spreadsheet')
+      end
+
+      def assert_package_equal(expected_path, actual_path, kind)
         #
         # Parse document archives and generate a diff
         xml_diffs = diff_docx_files(expected_path, actual_path)
         #
         # build error message
-        msg = 'The generated document does not match the sample. Please investigate file(s): '
+        msg = "The generated #{kind} does not match the sample. Please investigate file(s): "
         msg += xml_diffs.keys.sort.join(', ')
         xml_diffs.each do |name, diff_text|
           msg += "\n#{'-' * 72}\nFile: #{name}\n#{diff_text}\n"

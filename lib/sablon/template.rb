@@ -1,9 +1,12 @@
 require 'sablon/document_object_model/model'
 require 'sablon/processor/document'
 require 'sablon/processor/section_properties'
+require 'sablon/processor/worksheet'
+require 'sablon/processor/workbook'
 
 module Sablon
-  # Creates a template from an MS Word doc that can be easily manipulated
+  # Creates a template from an MS Word doc or an MS Excel spreadsheet that
+  # can be easily manipulated
   class Template
     attr_reader :document
 
@@ -125,4 +128,6 @@ module Sablon
   Template.register_processor(%r{word/document.xml}, Sablon::Processor::Document)
   Template.register_processor(%r{word/document.xml}, Sablon::Processor::SectionProperties)
   Template.register_processor(%r{word/(?:header|footer)\d*\.xml}, Sablon::Processor::Document)
+  Template.register_processor(%r{^xl/workbook\.xml$}, Sablon::Processor::Workbook)
+  Template.register_processor(%r{^xl/worksheets/[^/]+\.xml$}, Sablon::Processor::Worksheet)
 end

@@ -1,0 +1,17 @@
+{
+  "company": { "name": "Sablon Supplies Ltd." },
+  "period": "Q1 2024",
+  "items": [
+    { "name": "Widget", "quantity": 10, "price": 2.5 },
+    { "name": "Gadget", "quantity": 3, "price": 19.99 },
+    { "name": "Doohickey", "quantity": 7, "price": 4.25 }
+  ],
+  "discount": 10,
+  "months": ["Jan", "Feb", "Mar"],
+  "regions": [
+    { "name": "North", "sales": [100, 120, 90] },
+    { "name": "South", "sales": [80, 95, 110] }
+  ],
+  "notes": ["Prices exclude VAT.", "Figures are preliminary."],
+  "generator": "sablon"
+}
