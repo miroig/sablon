@@ -2,6 +2,7 @@ require 'sablon/document_object_model/file_handler'
 require 'sablon/document_object_model/content_types'
 require 'sablon/document_object_model/numbering'
 require 'sablon/document_object_model/relationships'
+require 'sablon/document_object_model/workbook'
 
 module Sablon
   # Stores classes used to build and interact with the template by treating
@@ -90,5 +91,7 @@ module Sablon
     register_dom_handler(%r{word/numbering.xml}, Sablon::DOM::Numbering)
     register_dom_handler(/.rels$/, Sablon::DOM::Relationships)
     register_dom_handler(/Content_Types/, Sablon::DOM::ContentTypes)
+    register_dom_handler(%r{^xl/workbook\.xml$}, Sablon::DOM::Workbook)
+    register_dom_handler(%r{^xl/sharedStrings\.xml$}, Sablon::DOM::SharedStrings)
   end
 end

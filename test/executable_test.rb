@@ -23,4 +23,14 @@ class ExecutableTest < Sablon::TestCase
 
     assert_docx_equal @sample_path, @output_path
   end
+
+  def test_generate_spreadsheet_from_template
+    output_path = @base_path + "sandbox/xlsx_report_executable.xlsx"
+    template_path = @base_path + "fixtures/xlsx_report_template.xlsx"
+    context_path = @base_path + "fixtures/xlsx_report_context.json"
+    output_path.delete if output_path.exist?
+    `cat #{context_path} | #{@executable_path} #{template_path} #{output_path}`
+
+    assert_xlsx_equal @base_path + "fixtures/xlsx_report_sample.xlsx", output_path
+  end
 end

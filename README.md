@@ -3,9 +3,9 @@
 [![Gem Version](https://badge.fury.io/rb/sablon.svg)](http://badge.fury.io/rb/sablon)
 [![Build Status](https://github.com/senny/sablon/actions/workflows/ruby.yml/badge.svg)](https://github.com/senny/sablon/actions)
 
-Is a document template processor for Word `docx` files. It leverages Word's
-built-in formatting and layouting capabilities to make template creation easy
-and efficient.
+Is a document template processor for Word `docx` files and Excel `xlsx`
+spreadsheets. It leverages Word's and Excel's built-in formatting and layouting
+capabilities to make template creation easy and efficient.
 
 
 #### Table of Contents
@@ -20,6 +20,11 @@ and efficient.
       * [Loops](#loops)
       * [Nesting](#nesting)
       * [Comments](#comments)
+   * [Spreadsheet Templates (xlsx)](#spreadsheet-templates-xlsx)
+      * [Values](#values)
+      * [Repeating and Removing Rows or Cells](#repeating-and-removing-rows-or-cells)
+      * [Formulas and References](#formulas-and-references)
+      * [Spreadsheet Limitations](#spreadsheet-limitations)
    * [Configuration (Beta)](#configuration-beta)
       * [Customizing HTML Tag Conversion](#customizing-html-tag-conversion)
       * [Customizing CSS Style Conversion](#customizing-css-style-conversion)
@@ -346,6 +351,150 @@ styles for HTML insertion.
 «endComment»
 ```
 
+### Spreadsheet Templates (xlsx)
+
+Excel workbooks (`.xlsx` and `.xlsm`) are rendered the same way as Word
+documents, Sablon detects the type of the template automatically:
+
+```ruby
+template = Sablon.template(File.expand_path("~/Desktop/report.xlsx"))
+context = {
+  title: "Quarterly Report",
+  items: [{ name: "Widget", quantity: 10, price: 2.5 }]
+}
+template.render_to_file File.expand_path("~/Desktop/output.xlsx"), context
+```
+
+Spreadsheets have no MailMerge fields. Instead, fields are typed into cells
+using double braces. The expressions inside the braces are the same as in Word
+templates:
+
+| Word template               | Spreadsheet template         |
+|-----------------------------|------------------------------|
+| `«=title»`                  | `{{=title}}`                 |
+| `«=person.address.street»`  | `{{=person.address.street}}` |
+| `«items:each(item)»`        | `{{items:each(item)}}`       |
+| `«items:endEach»`           | `{{items:endEach}}`          |
+| `«body:if(present?)»`       | `{{body:if(present?)}}`      |
+| `«body:elsif(nil?)»`        | `{{body:elsif(nil?)}}`       |
+| `«body:else»`               | `{{body:else}}`              |
+| `«body:endIf»`              | `{{body:endIf}}`             |
+
+A field can be the only content of a cell or be part of a longer text like
+`Report for {{=period}}`. The formatting of the text around a field is kept.
+Fields with unknown expressions are left in the cell as they are.
+
+A detailed description about how to create a spreadsheet template can be found
+[here](misc/TEMPLATE.md#creating-a-spreadsheet-template).
+
+#### Values
+
+When a field is the only content of a cell the value is stored as a native
+cell value, keeping the style (number format, font, ...) of the cell:
+
+* Numbers are inserted as numbers.
+* `Date`, `DateTime` and `Time` values are inserted as dates. Use a date or
+  time number format for the cell in the template, otherwise the date is
+  shown as a number.
+* `true` and `false` are inserted as boolean values.
+* `nil` results in an empty cell.
+* Everything else is inserted as text. Use `Sablon.content(:string, value)`
+  to insert numbers as text.
+
+Fields that are part of a longer text are always replaced with the text
+representation of the value. As in Word templates, `nil` and `false` remove
+the field.
+
+Only text and values can be inserted into spreadsheets. Inserting HTML,
+WordProcessingML or images raises a `Sablon::ContextError`.
+
+#### Repeating and Removing Rows or Cells
+
+Loops and conditionals repeat or remove the rows or cells between the start
+and the end field. Where the fields are placed decides what is repeated:
+
+* **Rows**: When the start and end fields are in different rows, the rows
+  between them are repeated (loops) or removed (conditionals). The rows
+  containing the fields are always removed, as are table rows in Word
+  templates. Rows below are moved up or down accordingly.
+* **Cells**: When the start and end fields are in the same row, the cells
+  between them are repeated to the right or removed within that row. The
+  cells containing the fields are removed and the remaining cells of the row
+  are moved. Column widths are not copied. Cell loops can be used inside of
+  row loops to create cross tables.
+
+The start and end field of a block need to be in different cells. Loops and
+conditionals can be nested.
+
+A simple list with a total looks like this (rows 2 and 4 are removed, row 3 is
+repeated for every item):
+
+|   | A                      | B                      | C                   | D            |
+|---|------------------------|------------------------|---------------------|--------------|
+| 1 | Product                | Quantity               | Price               | Amount       |
+| 2 | `{{items:each(item)}}` |                        |                     |              |
+| 3 | `{{=item.name}}`       | `{{=item.quantity}}`   | `{{=item.price}}`   | `=B3*C3`     |
+| 4 | `{{items:endEach}}`    |                        |                     |              |
+| 5 | Total                  |                        |                     | `=SUM(D3)`   |
+
+A cross table repeats cells within the repeated rows:
+
+|   | A                          | B                               | C                | D                               | E              |
+|---|----------------------------|---------------------------------|------------------|---------------------------------|----------------|
+| 1 | Region                     | `{{months:each(month)}}`        | `{{=month}}`     | `{{months:endEach}}`            | Total          |
+| 2 | `{{regions:each(region)}}` |                                 |                  |                                 |                |
+| 3 | `{{=region.name}}`         | `{{region.sales:each(amount)}}` | `{{=amount}}`    | `{{region.sales:endEach}}`      | `=SUM(C3)`     |
+| 4 | `{{regions:endEach}}`      |                                 |                  |                                 |                |
+| 5 | Total                      | `{{months:each(month)}}`        | `=SUM(C3)`       | `{{months:endEach}}`            | `=SUM(E3)`     |
+
+Have a look at the [example template](test/fixtures/xlsx_report_template.xlsx)
+and the [rendered result](test/fixtures/xlsx_report_sample.xlsx).
+
+#### Formulas and References
+
+Formulas and other references to cells are updated when rows and cells are
+repeated, moved or removed:
+
+* A formula in a repeated row or cell references the cells generated by the
+  same iteration, `=B3*C3` becomes `=B4*C4` in the row of the second item.
+* References from outside of a loop to cells inside of it cover all
+  generated copies. `=SUM(D3)` and `=SUM(D3:D3)` both become `=SUM(D2:D4)` for
+  three items.
+* Absolute references (`$`) from inside of a loop point to the first copy,
+  so running totals like `=SUM($D$3:D3)` work as expected.
+* A formula inside of a cell loop that references cells of another cell loop
+  uses the cells of the iteration with the same index, i.e. the monthly totals
+  of a cross table.
+* References to removed cells are replaced with `#REF!`, the same way Excel
+  does when cells are deleted. This includes ranges over a loop without items.
+  Wrap such formulas with `IFERROR` or include a row outside of the loop in
+  the range.
+* A range is always mapped to a single rectangle. Totals of nested loops
+  include the rows of the inner loops, use `SUBTOTAL(9, ...)` for subtotals
+  and grand totals because it ignores other `SUBTOTAL` results.
+
+Besides cell formulas on all sheets, Sablon updates defined names (including
+print areas), Excel tables, auto filters, conditional formatting, data
+validations, charts, pictures, shapes and charts anchored to cells, and notes
+(comments). Cached formula results are removed and the workbook is marked to
+be recalculated when it is opened.
+
+#### Spreadsheet Limitations
+
+* Merged cells, hyperlinks, page breaks, whole column references (`A:C`),
+  references written as text (i.e. `INDIRECT("A1")`) and pivot tables are not
+  updated.
+* Cell loops can't be used inside of Excel tables.
+* Images, fields in headers and footers and `.xltx` templates are not supported.
+* `comment` blocks are not enabled for spreadsheets by default. The field
+  handlers used for spreadsheets can be customized the same way as for Word
+  documents using `Sablon::Processor::Worksheet`, for example:
+
+  ```ruby
+  Sablon::Processor::Worksheet.register_field_handler :comment,
+                                                      Sablon::Processor::Document::CommentHandler.new
+  ```
+
 ### Configuration (Beta)
 
 The Sablon::Configuration singleton is a new feature that allows the end user to customize HTML parsing to their needs without needing to fork and edit the source code of the gem. This API is still in a beta state and may be subject to change as future needs are identified beyond HTML conversion.
@@ -428,6 +577,7 @@ cat <context path>.json | sablon <template path> <output path>
 ```
 
 If no `<output path>` is given, the document will be printed to stdout.
+Spreadsheet templates (`.xlsx`) are rendered the same way.
 
 
 Have a look at [this test](test/executable_test.rb) for examples.

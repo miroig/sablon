@@ -2,10 +2,13 @@ module Sablon
   module Processor
     class Document
       class OperationConstruction
-        def initialize(fields, field_handlers, default_handler)
+        # The +block_class+ builds the blocks enclosed by start and end fields,
+        # it allows processors of other document types to reuse this class.
+        def initialize(fields, field_handlers, default_handler, block_class = Block)
           @fields = fields
           @field_handlers = field_handlers
           @default_handler = default_handler
+          @block_class = block_class
           @operations = []
         end
 
@@ -37,7 +40,7 @@ module Sablon
           unless end_field
             raise TemplateError, "Could not find end field for «#{start_field.expression}». Was looking for «#{end_expression}»"
           end
-          Block.enclosed_by(start_field, end_field) if end_field
+          @block_class.enclosed_by(start_field, end_field) if end_field
         end
 
         # Creates multiple blocks based on the sub expression patterns supplied
@@ -52,7 +55,7 @@ module Sablon
             consume(false)
             break unless (end_field = @field)
             if sub_expr_patterns.any? { |pat| end_field.expression =~ pat }
-              blocks << Block.enclosed_by(start_field, end_field)
+              blocks << @block_class.enclosed_by(start_field, end_field)
               start_field = end_field
             end
           end
@@ -63,7 +66,7 @@ module Sablon
           end
 
           # add final block and return
-          blocks << Block.enclosed_by(start_field, end_field)
+          blocks << @block_class.enclosed_by(start_field, end_field)
         end
       end
     end

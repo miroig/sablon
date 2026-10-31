@@ -27,4 +27,10 @@ class EnvironmentTest < Sablon::TestCase
     # check that a new context reference was created
     assert !env.context.equal?(env2.context), "#{env.context} == #{env2.context}"
   end
+
+  def test_alter_context_transforms_new_values
+    env = Sablon::Environment.new(nil, items: [{ name: 'a' }])
+    env2 = env.alter_context(:item => { name: 'b' }, 'html:note' => nil)
+    assert_equal({ "items" => [{ "name" => "a" }], "item" => { "name" => "b" }, "note" => nil }, env2.context)
+  end
 end

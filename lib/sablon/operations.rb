@@ -11,6 +11,14 @@ module Sablon
       end
     end
 
+    # Inserts the raw value of the expression into a spreadsheet cell so
+    # that numbers, dates and booleans can be stored natively.
+    class CellInsertion < Struct.new(:expr, :field)
+      def evaluate(env)
+        field.replace_value(expr.evaluate(env.context), env)
+      end
+    end
+
     class Loop < Struct.new(:list_expr, :iterator_name, :block)
       def evaluate(env)
         value = list_expr.evaluate(env.context)
