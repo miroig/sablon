@@ -74,4 +74,15 @@ class FormulaTest < Sablon::TestCase
     end
     assert_equal 'a1 b2:c3', result
   end
+
+  def test_rename_columns
+    renames = { 't' => { '{{=first}}' => 'Amount', 'old' => 'New Name', 'x' => "it's [1]" } }
+    rename = ->(text) { Formula.rename_columns(text, renames) }
+    assert_equal 'SUM(T[Amount])+t[[New Name]]+T[@[New Name]]', rename.call('SUM(T[{{=first}}])+t[OLD]+T[@old]')
+    assert_equal 'T[[#Headers],[Amount]:[New Name]]', rename.call('T[[#Headers],[{{=first}}]:[Old]]')
+    assert_equal "T[[#This Row],[it''s '[1']]]", rename.call('T[[#This Row],[x]]')
+    assert_equal "T[[it''s '[1']]]", rename.call('T[x]')
+    unchanged = %(T[]+T[#All]+T[Other]+U[Old]+"T[Old]"+'T[Old]'!A1+[1]T!A1)
+    assert_equal unchanged, rename.call(unchanged)
+  end
 end

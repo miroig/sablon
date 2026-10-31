@@ -71,6 +71,30 @@ class PositionMapTest < Sablon::TestCase
     assert_equal '#REF!', map('3:3')
   end
 
+  def test_references_moved_beyond_the_sheet_limits
+    # the loop in rows 3 to 5 adds two rows
+    @map = PositionMap.new(Axis.new(3, 5, 2, 4 => [Entry.new(3, [], nil)]))
+    assert_equal 'A1048575', map('A1048573')
+    assert_equal '#REF!', map('A1048576')
+    assert_equal '#REF!', map('$A$1048575')
+    assert_equal '#REF!', map('A10:B1048576')
+    assert_equal '#REF!', map('10:1048576')
+    assert_equal '1048575:1048575', map('1048573:1048573')
+  end
+
+  def test_single_entries_are_matched_against_the_iteration
+    # the outer loop repeats rows 1 to 6 twice, the inner loop only
+    # generates a copy of row 4 in the first iteration
+    outer1 = Token.new('outer', 1, 0)
+    outer2 = Token.new('outer', 2, 1)
+    inner = Token.new('inner', 3, 0)
+    @map = PositionMap.new(Axis.new(1, 6, -2, 4 => [Entry.new(2, [outer1, inner], nil)]))
+    assert_equal 'B2', map('B4', [[outer1], []])
+    assert_equal '#REF!', map('B4', [[outer2], []])
+    assert_equal '#REF!', map('B4:B4', [[outer2], []])
+    assert_equal 'B2', map('B4')
+  end
+
   def test_column_ranges_are_not_changed
     assert_nil map('A:C')
   end

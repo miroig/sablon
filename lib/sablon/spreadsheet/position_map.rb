@@ -57,7 +57,7 @@ module Sablon
         # by the copies of those blocks.
         def matching(pos, context)
           entries = candidates(pos)
-          return entries if entries.length <= 1 || context.empty?
+          return entries if entries.empty? || context.empty?
           chain = entries.first.tokens
           key = []
           chain.each do |token|
@@ -225,6 +225,7 @@ module Sablon
           return format_box(box, ref.abs_row1, ref.abs_col1, ref.abs_row1, ref.abs_col1, true) if expand
         end
         pos = first(ref.row1, ref.col1, row_bind, cell_bind)
+        return Formula::REF_ERROR unless CellReference.valid?(pos[0], pos[1])
         CellReference.format(pos[0], pos[1], ref.abs_row1, ref.abs_col1)
       end
 
@@ -265,6 +266,7 @@ module Sablon
         end_rows ||= start_rows
         return Formula::REF_ERROR unless start_rows
         from, to = [start_rows[0], end_rows[1]].minmax
+        return Formula::REF_ERROR unless CellReference.valid_row?(from) && CellReference.valid_row?(to)
         "#{'$' if ref.abs_row1}#{from}:#{'$' if ref.abs_row2}#{to}"
       end
 
@@ -299,7 +301,9 @@ module Sablon
         box
       end
 
+      # Positions moved beyond the limits of the sheet result in #REF!
       def format_box(box, abs_row1, abs_col1, abs_row2, abs_col2, range = false)
+        return Formula::REF_ERROR unless CellReference.valid?(box[0], box[1]) && CellReference.valid?(box[2], box[3])
         start = CellReference.format(box[0], box[1], abs_row1, abs_col1)
         return start if !range && box[0] == box[2] && box[1] == box[3]
         start + ':' + CellReference.format(box[2], box[3], abs_row2, abs_col2)

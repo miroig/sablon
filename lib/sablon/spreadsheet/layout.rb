@@ -16,6 +16,7 @@ module Sablon
       FILLER = 'sablon-ph'.freeze
       TOKENS = 'sablon-t'.freeze
       COLUMN_REGION = 'sablon-c'.freeze
+      ESCAPE_SEQUENCE = /_x[0-9A-Fa-f]{4}_/
       ANNOTATIONS = [FILLER, TOKENS, COLUMN_REGION,
                      Sablon::Parser::Worksheet::CELL_MARKER,
                      Sablon::Parser::Worksheet::WHOLE_CELL_MARKER].freeze
@@ -286,10 +287,11 @@ module Sablon
         check_text_length(cell, inline)
       end
 
-      # Excel counts the length of cell text in UTF-16 code units
+      # Excel counts the length of cell text in UTF-16 code units. Each
+      # "_xHHHH_" escape sequence stands for a single code unit.
       def check_text_length(cell, inline)
         length = inline.xpath('.//*[local-name() = "t"]').inject(0) do |sum, node|
-          sum + node.content.encode('UTF-16LE').bytesize / 2
+          sum + node.content.gsub(ESCAPE_SEQUENCE, '_').encode('UTF-16LE').bytesize / 2
         end
         return if length <= CellValue::MAX_TEXT_LENGTH
         raise ContextError, "The text of cell #{cell['r']} exceeds the maximum length of " \

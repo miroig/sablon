@@ -78,7 +78,7 @@ module Sablon
           next node.content = value unless value.empty?
           node.parent.remove
         end
-        doc.xpath('/x:worksheet/x:autoFilter', ns).each { |node| update_filter(node) }
+        doc.xpath('/x:worksheet/x:autoFilter | /x:worksheet/x:sortState', ns).each { |node| update_filter(node) }
       end
 
       def update_defined_names(names)
@@ -112,17 +112,18 @@ module Sablon
       end
 
       # Updates the range of a table. Column loops can't be used within
-      # tables because the table columns would need to change.
+      # tables because the table columns would need to change. Returns a
+      # hash of the renamed columns (lower case old name => new name).
       def update_table(doc, sheet_doc)
         table = doc.root
         ref = Formula.references(table['ref']).first
-        return unless ref && ref.kind == :range
+        return {} unless ref && ref.kind == :range
         if @map.column_changes?(ref.row1, ref.row2, ref.col1, ref.col2)
           raise TemplateError, "Column loops are not supported within the table '#{table['displayName']}'"
         end
         #
         new_ref = sqref(table['ref'])
-        return if new_ref.empty?
+        return {} if new_ref.empty?
         table['ref'] = new_ref
         table.element_children.each { |node| update_filter(node) if node.name == 'autoFilter' }
         update_table_columns(table, sheet_doc)
@@ -222,42 +223,59 @@ module Sablon
         removable.remove
       end
 
+      # Filters and sort states whose cells have all been removed are
+      # deleted, as are sort states without any sort conditions left.
       def update_filter(node)
-        update_ref_attribute(node)
-        node.xpath('.//*[@ref]').each { |child| update_ref_attribute(child) }
+        return node.remove unless update_ref_attribute(node)
+        node.xpath('.//*[@ref]').each do |child|
+          next if update_ref_attribute(child)
+          parent = child.parent
+          child.remove
+          next unless parent && parent.name == 'sortState'
+          parent.remove if parent.element_children.none? { |sibling| sibling.name == 'sortCondition' }
+        end
       end
 
+      # Returns false if the range has been removed
       def update_ref_attribute(node)
+        return true unless node['ref']
         value = sqref(node['ref'])
-        node['ref'] = value unless value.empty?
+        return false if value.empty?
+        node['ref'] = value
+        true
       end
 
       # Header cells need to contain unique, non-empty text that matches the
       # names of the table columns, otherwise Excel repairs the table. Header
       # cells with rendered values are converted to text. Empty and duplicate
-      # names are replaced the same way Excel does (Column1, Name2).
+      # names are replaced the same way Excel does (Column1, Name2). The
+      # names of header cells keeping their template value are reserved
+      # first. Returns a hash of the renamed columns.
       def update_table_columns(table, sheet_doc)
-        return if table['headerRowCount'] == '0' || sheet_doc.nil?
+        return {} if table['headerRowCount'] == '0' || sheet_doc.nil?
         ref = Formula.references(table['ref']).first
         columns = table.element_children.detect { |node| node.name == 'tableColumns' }
-        return unless columns
+        return {} unless columns
         ns = { 'x' => namespace(sheet_doc) }
         row = sheet_doc.at_xpath("//x:sheetData/x:row[@r='#{ref.row1}']", ns)
-        return unless row
-        used = {}
-        columns.element_children.each_with_index do |column, index|
+        return {} unless row
+        headers = columns.element_children.each_with_index.map do |column, index|
           cell = header_cell(row, ref.row1, ref.col1 + index)
-          text = header_text(cell)
-          if text.nil?
-            used[column['name'].to_s.downcase] = true
-            next
-          end
+          [column, cell, header_text(cell)]
+        end
+        used = {}
+        headers.each { |column, _, text| used[column['name'].to_s.downcase] = true if text.nil? }
+        renamed = {}
+        headers.each_with_index do |(column, cell, text), index|
+          next if text.nil?
           name = text.empty? ? "Column#{index + 1}" : text
           name = unique_name(name, used) if used[name.downcase]
           used[name.downcase] = true
           CellValue.write_text(cell, name) unless name == text && cell['t'] == 'inlineStr'
+          renamed[column['name'].to_s.downcase] = name if column['name'] != name
           column['name'] = name
         end
+        renamed
       end
 
       # Returns the header cell, missing cells are added to the row

@@ -59,7 +59,7 @@ module Sablon
         # of the value is inserted.
         def replace_value(value, env)
           if whole_cell? && !value.is_a?(Sablon::Content)
-            return remove if value.nil?
+            return clear if value.nil?
             native = Sablon::Spreadsheet::CellValue.native(value, Sablon::Spreadsheet.date1904?(env))
             return write_native(native) if native
           end
@@ -96,6 +96,17 @@ module Sablon
 
         def write_native(native)
           Sablon::Spreadsheet::CellValue.write_native(@cell, *native)
+          unmark_cell
+        end
+
+        # turns the cell into a blank cell, including whitespace around the
+        # placeholder
+        def clear
+          Sablon::Spreadsheet::CellValue.clear(@cell)
+          unmark_cell
+        end
+
+        def unmark_cell
           @cell.remove_attribute(CELL_MARKER)
           @cell.remove_attribute(WHOLE_CELL_MARKER)
         end

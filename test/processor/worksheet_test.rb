@@ -24,16 +24,17 @@ class ProcessorWorksheetTest < Sablon::TestCase
   def test_native_values_keep_the_cell_style
     rows = [row(1, text('A1', '{{=date}}', 1), text('B1', '{{=time}}', 1), text('C1', '{{=amount}}', 3),
                 text('D1', '{{=flag}}'), text('E1', '{{=nothing}}', 2), text('F1', '{{=forced}}'),
-                text('G1', '{{=count}} items'))]
+                text('G1', '{{=count}} items'), text('H1', ' {{=nothing}} ', 2))]
     context = { date: Date.new(2024, 2, 29), time: Time.new(2024, 2, 29, 18, 0, 0), amount: 1234.5,
                 flag: true, nothing: nil, forced: Sablon.content(:string, 42), count: 3 }
     out = render(rows, context)
     assert_equal({ 'A1' => '45351', 'B1' => '45351.75', 'C1' => '1234.5', 'D1' => true,
-                   'E1' => nil, 'F1' => '42', 'G1' => '3 items' }, cell_values(out))
+                   'E1' => nil, 'F1' => '42', 'G1' => '3 items', 'H1' => nil }, cell_values(out))
     xml = sheet_xml(out)
     assert_includes xml, '<c r="A1" s="1">'
     assert_includes xml, '<c r="C1" s="3">'
     assert_includes xml, '<c r="E1" s="2"/>'
+    assert_includes xml, '<c r="H1" s="2"/>'
   end
 
   def test_dates_use_the_date_system_of_the_workbook
@@ -81,6 +82,20 @@ class ProcessorWorksheetTest < Sablon::TestCase
                  'A4' => 'G2', 'B4' => '=SUBTOTAL(9,B5:B5)', 'C4' => '=MAX(B5)',
                  'A5' => '3', 'B5' => '3', 'C5' => '=B5/B4',
                  'A6' => 'Total', 'B6' => '=SUBTOTAL(9,B2:B5)' }
+    assert_equal expected, cell_values(out)
+  end
+
+  def test_nested_loops_with_a_single_and_an_empty_iteration
+    rows = [row(1, text('A1', '{{groups:each(group)}}')),
+            row(2, text('A2', '{{=group.name}}'), formula('B2', 'SUBTOTAL(9,B4:B4)'), formula('C2', 'MAX(B4)')),
+            row(3, text('A3', '{{group.items:each(item)}}')),
+            row(4, text('A4', '{{=item}}'), text('B4', '{{=item}}')),
+            row(5, text('A5', '{{group.items:endEach}}')),
+            row(6, text('A6', '{{groups:endEach}}'))]
+    out = render(rows, groups: [{ name: 'G1', items: [1] }, { name: 'G2', items: [] }])
+    expected = { 'A1' => 'G1', 'B1' => '=SUBTOTAL(9,B2:B2)', 'C1' => '=MAX(B2)',
+                 'A2' => '1', 'B2' => '1',
+                 'A3' => 'G2', 'B3' => '=SUBTOTAL(9,#REF!)', 'C3' => '=MAX(#REF!)' }
     assert_equal expected, cell_values(out)
   end
 
@@ -181,6 +196,10 @@ class ProcessorWorksheetTest < Sablon::TestCase
     rows = [row(1, text('A1', 'x{{=text}}'))]
     assert_equal 32_767, cell_values(render(rows, text: 'a' * 32_766))['A1'].length
     e = assert_raises(Sablon::ContextError) { render(rows, text: 'a' * 32_767) }
+    assert_equal 'The text of cell A1 exceeds the maximum length of 32767 characters', e.message
+    # escape sequences count as a single character
+    assert_equal 4000 * 13, cell_values(render(rows, text: '_x0041_' * 4000))['A1'].length - 1
+    e = assert_raises(Sablon::ContextError) { render(rows, text: '_x0041_' * 4681) }
     assert_equal 'The text of cell A1 exceeds the maximum length of 32767 characters', e.message
   end
 

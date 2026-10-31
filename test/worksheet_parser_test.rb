@@ -91,10 +91,12 @@ class WorksheetParserTest < Sablon::TestCase
     assert_equal 'Total: ', field.cell.text
   end
 
-  def test_replace_value_with_nil_removes_the_placeholder
-    field = field_for('{{=value}}')
+  def test_replace_value_with_nil_clears_the_cell
+    field = field_for(' {{=value}} ')
     field.replace_value(nil, @env)
-    assert_nil field.run.parent
+    assert_empty field.cell.element_children
+    assert_nil field.cell['t']
+    assert_equal 'A1', field.cell['r']
   end
 
   def test_remove_parent_respects_reference_counts

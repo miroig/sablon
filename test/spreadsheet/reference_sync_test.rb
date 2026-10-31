@@ -69,6 +69,26 @@ class ReferenceSyncTest < Sablon::TestCase
     assert_equal ['$B$10'], doc.xpath('//xm:f', ns).map(&:text)
   end
 
+  def test_worksheet_sort_states
+    after = %(<sortState ref="A3:B5"><sortCondition ref="B3:B5"/></sortState>)
+    doc = render_xlsx(builder(after: after), context)['xl/worksheets/sheet1.xml']
+    ns = { 'x' => XlsxBuilder::MAIN_NS }
+    assert_equal ['A3:B7', 'B3:B7'], doc.xpath('//x:sortState/descendant-or-self::*[@ref]', ns).map { |n| n['ref'] }
+  end
+
+  def test_filters_and_sort_states_of_removed_cells_are_deleted
+    after = %(<autoFilter ref="A4:B4"><sortState ref="A4:B4"><sortCondition ref="B4"/></sortState></autoFilter>) +
+            %(<sortState ref="A2:B5"><sortCondition ref="B4"/></sortState>)
+    doc = render_xlsx(builder(after: after), context(0))['xl/worksheets/sheet1.xml']
+    ns = { 'x' => XlsxBuilder::MAIN_NS }
+    assert_nil doc.at_xpath('//x:autoFilter', ns)
+    assert_nil doc.at_xpath('//x:sortState', ns)
+    #
+    after = %(<autoFilter ref="A2:B5"><sortState ref="A2:B5"><sortCondition ref="A2:A5"/><sortCondition ref="B4"/></sortState></autoFilter>)
+    doc = render_xlsx(builder(after: after), context(0))['xl/worksheets/sheet1.xml']
+    assert_equal ['A2:B2', 'A2:B2', 'A2:A2'], doc.xpath('//x:autoFilter/descendant-or-self::*[@ref]', ns).map { |n| n['ref'] }
+  end
+
   def test_tables
     table = %(<table xmlns="#{XlsxBuilder::MAIN_NS}" id="1" name="Items" displayName="Items" ref="A2:B4" totalsRowShown="0">) +
             %(<autoFilter ref="A2:B4"/><tableColumns count="2"><tableColumn id="1" name="Name"/><tableColumn id="2" name="Value"/></tableColumns></table>)
@@ -87,6 +107,38 @@ class ReferenceSyncTest < Sablon::TestCase
     b.add_part('xl/tables/table1.xml', table, "#{CT}.spreadsheetml.table+xml")
     out = render_xlsx(b, first: 'Name')
     assert_equal %w[Name Fixed], out['xl/tables/table1.xml'].xpath('//x:tableColumn', 'x' => XlsxBuilder::MAIN_NS).map { |n| n['name'] }
+  end
+
+  def test_structured_references_follow_renamed_columns
+    rows = row(1, text('A1', '{{=first}}'), text('B1', 'Fixed')) + row(2, number('A2', 1), number('B2', 2)) +
+           row(3, formula('A3', 'SUM(T[{{=first}}])&"T[{{=first}}]"'))
+    table = %(<table xmlns="#{XlsxBuilder::MAIN_NS}" id="1" name="T" displayName="T" ref="A1:B2"><tableColumns count="2">) +
+            %(<tableColumn id="1" name="{{=first}}"/><tableColumn id="2" name="Fixed" totalsRowFunction="custom">) +
+            %(<totalsRowFormula>SUM(T[{{=first}}])</totalsRowFormula></tableColumn></tableColumns></table>)
+    b = XlsxBuilder.new.add_sheet('Data', rows, rels: [%w[table ../tables/table1.xml]])
+    b.add_sheet('Other', row(1, formula('A1', 'T[[#Headers],[{{=first}}]:[Fixed]]')))
+    b.defined_names = [['Amounts', 'T[{{=first}}]']]
+    b.add_part('xl/tables/table1.xml', table, "#{CT}.spreadsheetml.table+xml")
+    out = render_xlsx(b, first: 'Amount Due')
+    assert_equal '=SUM(T[[Amount Due]])&"T[{{=first}}]"', cell_values(out)['A3']
+    assert_equal '=T[[#Headers],[Amount Due]:[Fixed]]', cell_values(out, 2)['A1']
+    assert_equal ['T[[Amount Due]]'], out['xl/workbook.xml'].xpath('//x:definedName', 'x' => XlsxBuilder::MAIN_NS).map(&:text)
+    assert_equal 'SUM(T[[Amount Due]])', out['xl/tables/table1.xml'].at_xpath('//x:totalsRowFormula', 'x' => XlsxBuilder::MAIN_NS).text
+  end
+
+  def test_untouched_header_names_are_reserved
+    b = XlsxBuilder.new
+    b.shared_strings = ['Fixed']
+    rows = row(1, text('A1', '{{=first}}'), shared('B1', 0)) + row(2, number('A2', 1), number('B2', 2)) +
+           row(3, formula('A3', 'SUM(T[{{=first}}])+SUM(T[Fixed])'))
+    table = %(<table xmlns="#{XlsxBuilder::MAIN_NS}" id="1" name="T" displayName="T" ref="A1:B2"><tableColumns count="2">) +
+            %(<tableColumn id="1" name="{{=first}}"/><tableColumn id="2" name="Fixed"/></tableColumns></table>)
+    b.add_sheet('Data', rows, rels: [%w[table ../tables/table1.xml]])
+    b.add_part('xl/tables/table1.xml', table, "#{CT}.spreadsheetml.table+xml")
+    out = render_xlsx(b, first: 'fixed')
+    assert_equal %w[fixed2 Fixed], out['xl/tables/table1.xml'].xpath('//x:tableColumn', 'x' => XlsxBuilder::MAIN_NS).map { |n| n['name'] }
+    assert_equal({ 'A1' => 'fixed2', 'B1' => 'Fixed', 'A2' => '1', 'B2' => '2', 'A3' => '=SUM(T[fixed2])+SUM(T[Fixed])' },
+                 cell_values(out))
   end
 
   def test_column_loops_within_tables_are_not_supported

@@ -116,6 +116,125 @@ module Sablon
         items.reject { |item| item == REF_ERROR }.join(' ')
       end
 
+      # Renames the columns used by structured references like
+      # "Table1[Column]" or "Table1[[#Headers],[Column1]:[Column2]]".
+      # +renames+ maps lower case table names to hashes of lower case old
+      # column names and new column names.
+      def rename_columns(text, renames)
+        text = text.to_s
+        return text if renames.empty? || !text.include?('[')
+        ColumnRenamer.new(text, renames).rewrite
+      end
+
+      # Rewrites the column names of structured references
+      class ColumnRenamer
+        WORD = /[\p{L}\p{N}_.\\?]+/
+        # column names that can be used without inner brackets
+        PLAIN_NAME = /\A[\p{L}\p{N}_]+\z/
+        SPECIAL = /['#\[\]]/
+
+        def initialize(text, renames)
+          @ss = StringScanner.new(text)
+          @renames = renames
+        end
+
+        def rewrite
+          result = +''
+          until @ss.eos?
+            if @ss.check(/"/)
+              result << @ss.scan(STRING)
+            elsif @ss.check(/'/)
+              result << (@ss.scan(QUOTED_SHEET) || @ss.getch)
+            elsif @ss.check(/\[/)
+              result << scan_group
+            elsif (word = @ss.scan(WORD))
+              result << word
+              columns = @renames[word.downcase]
+              result << rename_group(scan_group, columns) if columns && @ss.check(/\[/)
+            else
+              result << @ss.getch
+            end
+          end
+          result
+        end
+
+        private
+
+        # Returns the text of a bracket group taking escape characters (')
+        # inside of it into account.
+        def scan_group
+          start = @ss.pos
+          depth = 0
+          until @ss.eos?
+            char = @ss.getch
+            if char == "'"
+              @ss.getch
+            elsif char == '['
+              depth += 1
+            elsif char == ']'
+              depth -= 1
+              break if depth.zero?
+            end
+          end
+          @ss.string.byteslice(start...@ss.pos)
+        end
+
+        def rename_group(group, columns)
+          inner = group[1...-1].to_s
+          return rename_items(group, columns) if nested?(inner)
+          prefix = inner.start_with?('@') ? '@' : ''
+          name = rename(inner[prefix.length..-1], columns)
+          return group unless name
+          name = "[#{name}]" unless unescape(name) =~ PLAIN_NAME
+          "[#{prefix}#{name}]"
+        end
+
+        # Renames the column items of a group like [[#Headers],[A]:[B]]
+        def rename_items(group, columns)
+          result = +''
+          depth = 0
+          item = nil
+          chars = group.each_char.to_a
+          index = 0
+          while index < chars.length
+            char = chars[index]
+            if char == "'"
+              (item || result) << char << chars[index + 1].to_s
+              index += 2
+              next
+            end
+            if char == '[' && (depth += 1) == 2
+              item = +''
+            elsif char == ']' && (depth -= 1) == 1
+              result << '[' << (item.start_with?('#') ? item : rename(item, columns) || item) << ']'
+              item = nil
+            elsif item
+              item << char
+            else
+              result << char
+            end
+            index += 1
+          end
+          result
+        end
+
+        def nested?(inner)
+          inner.gsub(/'./m, '').include?('[')
+        end
+
+        # Returns the escaped new name of a column or nil if it is not
+        # renamed.
+        def rename(escaped, columns)
+          return if escaped.empty? || escaped.start_with?('#')
+          name = columns[unescape(escaped).downcase]
+          name && name.gsub(SPECIAL) { |char| "'#{char}" }
+        end
+
+        def unescape(text)
+          text.gsub(/'(.)/m, '\1')
+        end
+      end
+
       # Tokenizer used to locate references
       class Scanner
         def initialize(text)

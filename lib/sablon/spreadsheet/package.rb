@@ -127,14 +127,18 @@ module Sablon
       end
 
       def update_sheet_parts(entry, updater)
+        renames = {}
         related(entry, 'table').each do |rid, table|
           next unless xml(table)
           if updater.table_removed?(xml(table))
             remove_table(entry, rid, table)
           else
-            updater.update_table(xml(table), xml(entry))
+            columns = updater.update_table(xml(table), xml(entry))
+            name = xml(table).root['displayName'] || xml(table).root['name']
+            renames[name.downcase] = columns if name && !columns.empty?
           end
         end
+        rename_table_columns(renames) unless renames.empty?
         related(entry, 'drawing').each do |_, drawing|
           updater.update_drawing(xml(drawing)) if xml(drawing)
         end
@@ -147,6 +151,29 @@ module Sablon
         related(entry, 'vmlDrawing').each do |_, vml|
           content = @model.zip_contents[vml]
           @model.zip_contents[vml] = updater.update_vml(content) if content.is_a?(String)
+        end
+      end
+
+      # Updates the structured references to renamed table columns in all
+      # formulas of the workbook.
+      def rename_table_columns(renames)
+        nodes = []
+        worksheets.each_key do |sheet|
+          doc = xml(sheet)
+          nodes.concat(doc.xpath('/*/*[local-name() = "sheetData"]/*/*/*[local-name() = "f"]').to_a) if doc
+          related(sheet, 'table').each do |_, table|
+            next unless xml(table)
+            nodes.concat(xml(table).xpath('//*[local-name() = "calculatedColumnFormula" or ' \
+                                          'local-name() = "totalsRowFormula"]').to_a)
+          end
+        end
+        nodes.concat(workbook.defined_names.to_a) if workbook
+        @model.zip_contents.each_key do |name|
+          next unless name =~ %r{^xl/charts/chart[^/]*\.xml$} && xml(name)
+          nodes.concat(xml(name).xpath('//*[local-name() = "f"]').to_a)
+        end
+        nodes.each do |node|
+          node.content = Formula.rename_columns(node.text, renames) unless node.text.empty?
         end
       end
 

@@ -466,10 +466,10 @@ repeated, moved or removed:
 * A formula inside of a cell loop that references cells of another cell loop
   uses the cells of the iteration with the same index, i.e. the monthly totals
   of a cross table.
-* References to removed cells are replaced with `#REF!`, the same way Excel
-  does when cells are deleted. This includes ranges over a loop without items.
-  Wrap such formulas with `IFERROR` or include a row outside of the loop in
-  the range.
+* References to removed cells or cells moved beyond the limits of the sheet
+  are replaced with `#REF!`, the same way Excel does when cells are deleted.
+  This includes ranges over a loop without items. Wrap such formulas with
+  `IFERROR` or include a row outside of the loop in the range.
 * A range is always mapped to a single rectangle. Totals of nested loops
   include the rows of the inner loops, use `SUBTOTAL(9, ...)` for subtotals
   and grand totals because it ignores other `SUBTOTAL` results.
@@ -489,6 +489,8 @@ when rows of a table are deleted or headers are edited:
 * Header cells are always stored as text. Empty header cells are named
   `Column1`, `Column2`, ... and duplicate names get a number appended
   (`Name2`).
+* Structured references (`Table1[{{=label}}]`) to renamed columns are updated
+  with the rendered header names.
 
 #### Spreadsheet Limitations
 
